@@ -4,6 +4,7 @@
 #include <mpi.h>
 #include <string>
 #include <vector>
+#include <queue>
 #include <string.h>
 
 using std::string;
@@ -15,16 +16,26 @@ int min(int a, int b) {
   return a < b ? a : b;
 }
 
-struct Troon
-{
+struct Troon {
+  enum class State {
+    waiting_platform,
+    on_platform,
+    waiting_transit,
+    in_transit,
+  };
+
   int id;
+
+  int line;
+  bool going_forward;
+  State state;
+  int state_timestamp;
 
   static void registerType();
   static MPI_Datatype datatype;
 };
 
-struct Station
-{
+struct Station {
   int id;
   int popularity;
 
@@ -35,8 +46,7 @@ struct Station
   static MPI_Datatype datatype;
 };
 
-struct Link
-{
+struct Link {
   int from;
   int to;
   int length;
@@ -45,14 +55,31 @@ struct Link
   static MPI_Datatype datatype;
 };
 
-MPI_Datatype Troon::datatype = 0;
+struct CompareTroon {
+  bool operator()(Troon &a, Troon &b) {
+    if (a.state_timestamp != b.state_timestamp) {
+      return a.state_timestamp > b.state_timestamp;
+    }
 
-void Troon::registerType()
-{
-  const int num_fields = 1;
-  MPI_Datatype types[num_fields] = { MPI_INT };
-  int block_lengths[num_fields] = { 1 };
-  MPI_Aint offsets[num_fields] = { offsetof(Troon, id) };
+    return a.id > b.id;
+  }
+};
+
+struct LinkState {
+  std::priority_queue<Troon, std::vector<Troon>, CompareTroon> waiting_platform;
+  Troon on_platform;
+  Troon in_transit;
+
+  LinkState();
+};
+
+MPI_Datatype Troon::datatype = 0;
+void Troon::registerType() {
+  const int num_fields = 5;
+  MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_CXX_BOOL, MPI_INT, MPI_INT };
+  int block_lengths[num_fields] = { 1, 1, 1, 1, 1 };
+  MPI_Aint offsets[num_fields] = { offsetof(Troon, id), offsetof(Troon, line),
+    offsetof(Troon, going_forward), offsetof(Troon, state), offsetof(Troon, state_timestamp) };
 
   MPI_Type_create_struct(num_fields, block_lengths, offsets, types, &datatype);
   MPI_Type_commit(&datatype);
@@ -60,8 +87,7 @@ void Troon::registerType()
 
 MPI_Datatype Station::datatype = 0;
 
-void Station::registerType()
-{
+void Station::registerType() {
   const int num_fields = 4;
   MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_INT, MPI_INT };
   int block_lengths[num_fields] = { 1, 1, 3, 3 };
@@ -74,8 +100,7 @@ void Station::registerType()
 
 MPI_Datatype Link::datatype = 0;
 
-void Link::registerType()
-{
+void Link::registerType() {
   const int num_fields = 3;
   MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_INT };
   int block_lengths[num_fields] = { 1, 1, 1 };
@@ -83,6 +108,11 @@ void Link::registerType()
 
   MPI_Type_create_struct(num_fields, block_lengths, offsets, types, &datatype);
   MPI_Type_commit(&datatype);
+}
+
+LinkState::LinkState() {
+  on_platform.id = -1;
+  in_transit.id = -1;
 }
 
 std::ostream &operator <<(std::ostream &os, const Link &link) {
@@ -114,6 +144,9 @@ int main(int argc, char *argv[]) {
   Station::registerType();
   Link::registerType();
 
+  int ticks;
+  int num_troons[3];
+
   Station *stations;
   int num_stations;
 
@@ -122,8 +155,6 @@ int main(int argc, char *argv[]) {
 
   int forward_start_links[3];
   int backward_start_links[3];
-
-  int num_troons[3];
 
   if (!rank)
   {
@@ -192,6 +223,8 @@ int main(int argc, char *argv[]) {
 
     size_t num_lines;
     ifs >> num_lines;
+
+    ticks = N;
 
     num_troons[0] = g;
     num_troons[1] = y;
@@ -280,7 +313,8 @@ int main(int argc, char *argv[]) {
       free(connections);
     }
 
-#ifndef DEBUG
+#ifdef DEBUG
+    printf("Number of ticks: %d\n", ticks);
     printf("Number of troons: [%d, %d, %d]\n", num_troons[0], num_troons[1], num_troons[2]);
     std::cout << "Starting forward links are: " << links[forward_start_links[0]] << ", " << links[forward_start_links[1]] << ", " << links[forward_start_links[2]] << '\n';
     std::cout << "Starting backward links are: " << links[backward_start_links[0]] << ", " << links[backward_start_links[1]] << ", " << links[backward_start_links[2]] << '\n';
@@ -314,6 +348,7 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
+    MPI_Bcast(&ticks, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(num_troons, 3, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_stations, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_links, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -325,6 +360,7 @@ int main(int argc, char *argv[]) {
     MPI_Bcast(backward_start_links, 3, MPI_INT, 0, MPI_COMM_WORLD);
 
   } else {
+    MPI_Bcast(&ticks, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(num_troons, 3, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_stations, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_links, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -343,10 +379,191 @@ int main(int argc, char *argv[]) {
   // responsible for updating their own links
 
   int link_group_size = (num_links + numproc - 1) / numproc;
-  int my_links_start = rank * link_group_size;
+  int my_links_start = min(rank * link_group_size, num_links);
   int my_links_end = min(my_links_start + link_group_size, num_links);
+  int my_links_count = my_links_end - my_links_start;
 
+#ifdef DEBUG
   printf("Rank %d starting at link %d to link %d\n", rank, my_links_start, my_links_end);
+#endif
+
+
+  if (my_links_count) {
+    std::vector<LinkState> link_states(my_links_count);
+
+    // Determine if this link group should be spawning troons
+    int num_forward_to_spawn[3];
+    int num_backward_to_spawn[3];
+    memset(num_forward_to_spawn, 0, sizeof(int) * 3);
+    memset(num_backward_to_spawn, 0, sizeof(int) * 3);
+    for (int i = 0; i < 3; i++) {
+      int forward_spawn_link = forward_start_links[i];
+      if (forward_spawn_link >= my_links_start && forward_spawn_link < my_links_end) {
+        num_forward_to_spawn[i] = (num_troons[i] + 1) / 2;
+      }
+
+      int backward_spawn_link = backward_start_links[i];
+      if (backward_spawn_link >= my_links_start && backward_spawn_link < my_links_end) {
+        num_backward_to_spawn[i] = num_troons[i] / 2;
+      }
+    }
+
+#ifdef DEBUG
+    printf("Rank %d will spawn (forward: [%d, %d, %d], backward: [%d, %d, %d]\n",
+      rank, num_forward_to_spawn[0], num_forward_to_spawn[1], num_forward_to_spawn[2],
+      num_backward_to_spawn[0], num_backward_to_spawn[1], num_backward_to_spawn[2]);
+#endif
+
+    for (int tick = 0; tick < ticks; tick++) {
+      // Spawn troons
+      {
+        // Calculate the total number of troons across all processes
+        // Need this to create correct ids
+        int troon_count = 0;
+        int troons_left_to_spawn[3];
+        for (int i = 0; i < 3; i++) {
+          int troon_line_count = min(num_troons[i], 2 * tick);
+          troons_left_to_spawn[i] = num_troons[i] - troon_line_count;
+          troon_count += troon_line_count;
+        }
+
+        int forward_id = troon_count;
+        for (int i = 0; i < 3; i++) {
+          // Offset based on which line it is
+          forward_id += min(i, 1) * min(2, troons_left_to_spawn[i]);
+
+          if (num_forward_to_spawn[i]) {
+            Troon troon;
+            troon.id = forward_id;
+            troon.line = i;
+            troon.going_forward = true;
+            troon.state = Troon::State::waiting_platform;
+            troon.state_timestamp = 0;
+
+            LinkState &lstate = link_states[forward_start_links[i] - my_links_start];
+            lstate.waiting_platform.push(troon);
+
+            num_forward_to_spawn[i]--;
+
+#ifdef DEBUG
+            printf("Rank %d spawned forward troon (id: %d, line: %d) at tick %d\n", rank, troon.id, troon.line, tick);
+#endif
+          }
+          if (num_backward_to_spawn[i]) {
+            Troon troon;
+            troon.id = forward_id + 1;
+            troon.line = i;
+            troon.going_forward = false;
+            troon.state = Troon::State::waiting_platform;
+            troon.state_timestamp = 0;
+
+            LinkState &lstate = link_states[backward_start_links[i] - my_links_start];
+            lstate.waiting_platform.push(troon);
+
+            num_backward_to_spawn[i]--;
+
+#ifdef DEBUG
+            printf("Rank %d spawned backward troon (id: %d, line: %d) at tick %d\n", rank, troon.id, troon.line, tick);
+#endif
+          }
+        }
+      }
+
+      for (int i = 0; i < my_links_count; i++) {
+        Link &link = links[i + my_links_start];
+        LinkState &link_state = link_states[i];
+
+        Station &to_station = stations[link.to];
+        Station &from_station = stations[link.from];
+
+        // Transit troon on link
+        {
+          Troon troon = link_state.in_transit;
+          if (troon.id >= 0 && troon.state_timestamp >= link.length) {
+            // Switch direction if reached terminal station
+            if ((troon.going_forward && to_station.forward_links[troon.line] < 0) ||
+                (!troon.going_forward && to_station.backward_links[troon.line] < 0)) {
+              troon.going_forward = !troon.going_forward;
+            }
+
+            link_state.in_transit.id = -1;
+            troon.state = Troon::State::waiting_platform;
+            troon.state_timestamp = tick;
+
+            int next_link_id;
+            if (troon.going_forward) {
+              next_link_id = to_station.forward_links[troon.line];
+            } else {
+              next_link_id = to_station.backward_links[troon.line];
+            }
+            int destination_rank = next_link_id / numproc;
+
+#ifdef DEBUG
+              printf("Sending troon from rank %d to rank %d\n (id: %d, line: %d, from link: %d, to link: %d)\n",
+                rank, destination_rank, troon.id, troon.line, i + my_links_start, next_link_id);
+#endif
+            if (destination_rank == rank) {
+              LinkState &next_link_state = link_states[next_link_id - my_links_start];
+              next_link_state.waiting_platform.push(troon);
+            } else {
+              // Non blocking send to avoid deadlocks
+              MPI_Request req;
+              MPI_Isend(&troon, 1, Troon::datatype, destination_rank, troon.line, MPI_COMM_WORLD, &req);
+
+            }
+          }
+
+          // TODO: Send messages to all destination links
+
+          // TODO: Receive troons from other links
+        }
+
+        // Move from platform to link
+        if (link_state.on_platform.id >= 0) {
+          if (link_state.on_platform.state == Troon::State::waiting_transit) {
+            link_state.on_platform.state = Troon::State::in_transit;
+
+#ifdef DEBUG
+            printf("Rank %d moved troon at link %d from waiting on transit to transiting (id: %d, line: %d) at tick %d\n", rank,
+                i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
+#endif
+          } else {
+            if (link_state.in_transit.id < 0) {
+              int wait_time = from_station.popularity + 1;
+              if (tick - link_state.on_platform.state_timestamp >= wait_time) {
+                link_state.on_platform.state = Troon::State::waiting_transit;
+                link_state.on_platform.state_timestamp = tick;
+
+#ifdef DEBUG
+              printf("Rank %d moved troon at link %d from being on platform to waiting for transit"
+                "(id: %d, line: %d) at tick %d\n", rank,
+                  i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
+#endif
+              }
+            }
+          }
+        }
+
+        // Move from waiting area to platform
+        if (link_state.on_platform.id <= 0 && !link_state.waiting_platform.empty()) {
+          Troon first_troon = link_state.waiting_platform.top();
+          link_state.waiting_platform.pop();
+
+          first_troon.state_timestamp = tick;
+          first_troon.state = Troon::State::on_platform;
+          link_state.on_platform = first_troon;
+
+#ifdef DEBUG
+          printf("Rank %d moved troon at link %d from waiting area to platform (id: %d, line: %d) at tick %d\n", rank,
+              i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
+#endif
+        }
+      }
+    }
+
+    // TODO: Send all troons to main process when reached last ticks and print out the state in the main process
+  }
+
 
   free(stations);
   free(links);
