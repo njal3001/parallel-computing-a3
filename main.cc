@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <queue>
+#include <algorithm>
 #include <string.h>
 
 using std::string;
@@ -30,6 +31,7 @@ struct Troon {
   bool going_forward;
   State state;
   int state_timestamp;
+  int on_link;
 
   static void registerType();
   static MPI_Datatype datatype;
@@ -47,9 +49,17 @@ struct Station {
 };
 
 struct Link {
+  enum class Usage {
+    inactive,
+    forward,
+    backward,
+  };
+
   int from;
   int to;
   int length;
+
+  Usage usage[3];
 
   static void registerType();
   static MPI_Datatype datatype;
@@ -75,11 +85,11 @@ struct LinkState {
 
 MPI_Datatype Troon::datatype = 0;
 void Troon::registerType() {
-  const int num_fields = 5;
-  MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_CXX_BOOL, MPI_INT, MPI_INT };
-  int block_lengths[num_fields] = { 1, 1, 1, 1, 1 };
+  const int num_fields = 6;
+  MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_CXX_BOOL, MPI_INT, MPI_INT, MPI_INT };
+  int block_lengths[num_fields] = { 1, 1, 1, 1, 1, 1 };
   MPI_Aint offsets[num_fields] = { offsetof(Troon, id), offsetof(Troon, line),
-    offsetof(Troon, going_forward), offsetof(Troon, state), offsetof(Troon, state_timestamp) };
+    offsetof(Troon, going_forward), offsetof(Troon, state), offsetof(Troon, state_timestamp), offsetof(Troon, on_link) };
 
   MPI_Type_create_struct(num_fields, block_lengths, offsets, types, &datatype);
   MPI_Type_commit(&datatype);
@@ -101,10 +111,11 @@ void Station::registerType() {
 MPI_Datatype Link::datatype = 0;
 
 void Link::registerType() {
-  const int num_fields = 3;
-  MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_INT };
-  int block_lengths[num_fields] = { 1, 1, 1 };
-  MPI_Aint offsets[num_fields] = { offsetof(Link, from), offsetof(Link, to), offsetof(Link, length) };
+  const int num_fields = 4;
+
+  MPI_Datatype types[num_fields] = { MPI_INT, MPI_INT, MPI_INT, MPI_INT };
+  int block_lengths[num_fields] = { 1, 1, 1, 3 };
+  MPI_Aint offsets[num_fields] = { offsetof(Link, from), offsetof(Link, to), offsetof(Link, length), offsetof(Link, usage)};
 
   MPI_Type_create_struct(num_fields, block_lengths, offsets, types, &datatype);
   MPI_Type_commit(&datatype);
@@ -145,6 +156,7 @@ int main(int argc, char *argv[]) {
   Link::registerType();
 
   int ticks;
+  int num_lines;
   int num_troons[3];
 
   Station *stations;
@@ -156,6 +168,7 @@ int main(int argc, char *argv[]) {
   int forward_start_links[3];
   int backward_start_links[3];
 
+  std::vector<string> station_names{};
   if (!rank)
   {
     if (argc < 2) {
@@ -174,7 +187,6 @@ int main(int argc, char *argv[]) {
 
     // Read station names.
     string station;
-    std::vector<string> station_names{};
     station_names.reserve(S);
     for (size_t i = 0; i < S; ++i) {
       ifs >> station;
@@ -221,7 +233,6 @@ int main(int argc, char *argv[]) {
     ifs >> y;
     ifs >> b;
 
-    size_t num_lines;
     ifs >> num_lines;
 
     ticks = N;
@@ -270,6 +281,9 @@ int main(int argc, char *argv[]) {
             l->from = i;
             l->to = j;
             l->length = length;
+            l->usage[0] = Link::Usage::inactive;
+            l->usage[1] = Link::Usage::inactive;
+            l->usage[2] = Link::Usage::inactive;
 
             connections[i * num_stations + j] = link_index;
             link_index++;
@@ -292,6 +306,9 @@ int main(int argc, char *argv[]) {
                 int backward_link_id = connections[next_station->id * num_stations + current_station->id];
                 current_station->forward_links[line_index] = forward_link_id;
                 next_station->backward_links[line_index] = backward_link_id;
+
+                links[forward_link_id].usage[line_index] = Link::Usage::forward;
+                links[backward_link_id].usage[line_index] = Link::Usage::backward;
 
                 // Check if first link in line
                 if (current_station->backward_links[line_index] < 0) {
@@ -318,6 +335,10 @@ int main(int argc, char *argv[]) {
     printf("Number of troons: [%d, %d, %d]\n", num_troons[0], num_troons[1], num_troons[2]);
     std::cout << "Starting forward links are: " << links[forward_start_links[0]] << ", " << links[forward_start_links[1]] << ", " << links[forward_start_links[2]] << '\n';
     std::cout << "Starting backward links are: " << links[backward_start_links[0]] << ", " << links[backward_start_links[1]] << ", " << links[backward_start_links[2]] << '\n';
+
+    for (int i = 0; i < num_links; i++) {
+      std::cout << "Link " << i << ": " << links[i] << '\n';
+    }
 
     std::cout << "Stations:\n";
     for (int i = 0; i < num_stations; i++) {
@@ -349,6 +370,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     MPI_Bcast(&ticks, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&num_lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(num_troons, 3, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_stations, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_links, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -361,6 +383,7 @@ int main(int argc, char *argv[]) {
 
   } else {
     MPI_Bcast(&ticks, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&num_lines, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(num_troons, 3, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_stations, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&num_links, 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -430,7 +453,9 @@ int main(int argc, char *argv[]) {
         int forward_id = troon_count;
         for (int i = 0; i < 3; i++) {
           // Offset based on which line it is
-          forward_id += min(i, 1) * min(2, troons_left_to_spawn[i]);
+          if (i) {
+            forward_id += min(2, troons_left_to_spawn[i - 1]);
+          }
 
           if (num_forward_to_spawn[i]) {
             Troon troon;
@@ -439,6 +464,7 @@ int main(int argc, char *argv[]) {
             troon.going_forward = true;
             troon.state = Troon::State::waiting_platform;
             troon.state_timestamp = 0;
+            troon.on_link = forward_start_links[i];
 
             LinkState &lstate = link_states[forward_start_links[i] - my_links_start];
             lstate.waiting_platform.push(troon);
@@ -456,6 +482,7 @@ int main(int argc, char *argv[]) {
             troon.going_forward = false;
             troon.state = Troon::State::waiting_platform;
             troon.state_timestamp = 0;
+            troon.on_link = backward_start_links[i];
 
             LinkState &lstate = link_states[backward_start_links[i] - my_links_start];
             lstate.waiting_platform.push(troon);
@@ -469,6 +496,66 @@ int main(int argc, char *argv[]) {
         }
       }
 
+      // Transit troons on all links
+      for (int i = 0; i < my_links_count; i++) {
+        Link &link = links[i + my_links_start];
+        LinkState &link_state = link_states[i];
+
+        Station &to_station = stations[link.to];
+
+        for (int line_index = 0; line_index < 3; line_index++) {
+          if (link.usage[line_index] != Link::Usage::inactive) {
+            // Determine next link on line, switch direction if last link
+            int next_link_id;
+            if (link.usage[line_index] == Link::Usage::forward) {
+              if (to_station.forward_links[line_index] < 0) {
+                next_link_id = to_station.backward_links[line_index];
+              } else {
+                next_link_id = to_station.forward_links[line_index];
+              }
+            } else {
+              if (to_station.backward_links[line_index] < 0) {
+                next_link_id = to_station.forward_links[line_index];
+              } else {
+                next_link_id = to_station.backward_links[line_index];
+              }
+            }
+
+            int destination_rank = next_link_id / link_group_size;
+
+            Troon troon = link_state.in_transit;
+            if (troon.id >= 0 && troon.line == line_index && tick - troon.state_timestamp >= link.length) {
+              link_state.in_transit.id = -1;
+              troon.state = Troon::State::waiting_platform;
+              troon.state_timestamp = tick;
+              troon.going_forward = links[next_link_id].usage[troon.line] == Link::Usage::forward;
+              troon.on_link = next_link_id;
+
+
+#ifdef DEBUG
+                printf("Sending troon from rank %d to rank %d (id: %d, line: %d, from link: %d, to link: %d) at tick %d\n",
+                  rank, destination_rank, troon.id, troon.line, i + my_links_start, next_link_id, tick);
+#endif
+              // Non blocking send to avoid deadlocks
+              MPI_Request req;
+              MPI_Isend(&troon, 1, Troon::datatype, destination_rank, 0, MPI_COMM_WORLD, &req);
+            } else {
+              // Send invalid troon to next link, signaling that there is no troon arriving
+              Troon empty_troon;
+              empty_troon.id = -1;
+
+              MPI_Request req;
+              MPI_Isend(&empty_troon, 1, Troon::datatype, destination_rank, 0, MPI_COMM_WORLD, &req);
+
+  #ifdef DEBUG
+                printf("Sending empty troon from rank %d to rank %d (line: %d, from link: %d, to link: %d) at tick %d\n",
+                  rank, destination_rank, line_index, i + my_links_start, next_link_id, tick);
+  #endif
+            }
+          }
+        }
+      }
+
       for (int i = 0; i < my_links_count; i++) {
         Link &link = links[i + my_links_start];
         LinkState &link_state = link_states[i];
@@ -476,56 +563,61 @@ int main(int argc, char *argv[]) {
         Station &to_station = stations[link.to];
         Station &from_station = stations[link.from];
 
-        // Transit troon on link
-        {
-          Troon troon = link_state.in_transit;
-          if (troon.id >= 0 && troon.state_timestamp >= link.length) {
-            // Switch direction if reached terminal station
-            if ((troon.going_forward && to_station.forward_links[troon.line] < 0) ||
-                (!troon.going_forward && to_station.backward_links[troon.line] < 0)) {
-              troon.going_forward = !troon.going_forward;
-            }
-
-            link_state.in_transit.id = -1;
-            troon.state = Troon::State::waiting_platform;
-            troon.state_timestamp = tick;
-
-            int next_link_id;
-            if (troon.going_forward) {
-              next_link_id = to_station.forward_links[troon.line];
+        // Receive troons from other links
+        for (int line_index = 0; line_index < 3; line_index++) {
+          if (link.usage[line_index] != Link::Usage::inactive) {
+            // Determine previous link on line, switch direction if last link
+            int previous_link_id;
+            if (link.usage[line_index] == Link::Usage::forward) {
+              if (from_station.backward_links[line_index] < 0) {
+                // First link on line, will get troon from the backwards link
+                previous_link_id = to_station.backward_links[line_index];
+              } else {
+                Station &prev_station = stations[links[from_station.backward_links[line_index]].to];
+                previous_link_id = prev_station.forward_links[line_index];
+              }
             } else {
-              next_link_id = to_station.backward_links[troon.line];
+              if (from_station.forward_links[line_index] < 0) {
+                // Last link on line, will get troon from the forwards link
+                previous_link_id = to_station.forward_links[line_index];
+              } else {
+                Station &prev_station = stations[links[from_station.forward_links[line_index]].to];
+                previous_link_id = prev_station.backward_links[line_index];
+              }
             }
-            int destination_rank = next_link_id / numproc;
+
+            int source_rank = previous_link_id / link_group_size;
+            MPI_Status status;
 
 #ifdef DEBUG
-              printf("Sending troon from rank %d to rank %d\n (id: %d, line: %d, from link: %d, to link: %d)\n",
-                rank, destination_rank, troon.id, troon.line, i + my_links_start, next_link_id);
+            printf("Receiving troon at rank %d from rank %d (line: %d, from link: %d, to link: %d) at tick %d\n",
+              rank, source_rank, line_index, previous_link_id, i + my_links_start, tick);
 #endif
-            if (destination_rank == rank) {
-              LinkState &next_link_state = link_states[next_link_id - my_links_start];
-              next_link_state.waiting_platform.push(troon);
-            } else {
-              // Non blocking send to avoid deadlocks
-              MPI_Request req;
-              MPI_Isend(&troon, 1, Troon::datatype, destination_rank, troon.line, MPI_COMM_WORLD, &req);
 
+            Troon arriving_troon;
+            MPI_Recv(&arriving_troon, 1, Troon::datatype, source_rank, 0, MPI_COMM_WORLD, &status);
+
+            if (arriving_troon.id >= 0) {
+              link_state.waiting_platform.push(arriving_troon);
+#ifdef DEBUG
+              printf("Added troon to waiting platform at  rank %d (id: %d, line: %d, link: %d) at tick %d\n",
+                rank, arriving_troon.id, line_index, i + my_links_start, tick);
+#endif
             }
           }
-
-          // TODO: Send messages to all destination links
-
-          // TODO: Receive troons from other links
         }
 
         // Move from platform to link
         if (link_state.on_platform.id >= 0) {
           if (link_state.on_platform.state == Troon::State::waiting_transit) {
-            link_state.on_platform.state = Troon::State::in_transit;
+            link_state.in_transit = link_state.on_platform;
+            link_state.in_transit.state = Troon::State::in_transit;
+            link_state.in_transit.state_timestamp = tick;
+
+            link_state.on_platform.id = -1;
 
 #ifdef DEBUG
-            printf("Rank %d moved troon at link %d from waiting on transit to transiting (id: %d, line: %d) at tick %d\n", rank,
-                i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
+            printf("Rank %d moved troon at link %d from waiting on transit to transiting (id: %d, line: %d) at tick %d\n", rank, i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
 #endif
           } else {
             if (link_state.in_transit.id < 0) {
@@ -545,7 +637,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Move from waiting area to platform
-        if (link_state.on_platform.id <= 0 && !link_state.waiting_platform.empty()) {
+        if (link_state.on_platform.id < 0 && !link_state.waiting_platform.empty()) {
           Troon first_troon = link_state.waiting_platform.top();
           link_state.waiting_platform.pop();
 
@@ -559,9 +651,87 @@ int main(int argc, char *argv[]) {
 #endif
         }
       }
-    }
 
-    // TODO: Send all troons to main process when reached last ticks and print out the state in the main process
+      if (ticks - tick <= num_lines) {
+        std::vector<Troon> my_troons;
+        for (LinkState &link_state : link_states) {
+          if (link_state.on_platform.id >= 0) {
+            my_troons.push_back(link_state.on_platform);
+          }
+          if (link_state.in_transit.id >= 0) {
+            my_troons.push_back(link_state.in_transit);
+          }
+          std::priority_queue<Troon, std::vector<Troon>, CompareTroon> tmp = link_state.waiting_platform;
+          while (!tmp.empty()) {
+            my_troons.push_back(tmp.top());
+            tmp.pop();
+          }
+        }
+
+        if (rank) {
+          int count = my_troons.size();
+          MPI_Send(&count, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
+          if (count > 0) {
+            MPI_Send(my_troons.data(), count, Troon::datatype, 0, 0, MPI_COMM_WORLD);
+          }
+        } else {
+          int last_rank_with_troons = num_links / link_group_size;
+          for (int other_rank = 1; other_rank < last_rank_with_troons; other_rank++) {
+            MPI_Status status;
+            int count;
+            MPI_Recv(&count, 1, MPI_INT, other_rank, 0, MPI_COMM_WORLD, &status);
+            if (count > 0) {
+              Troon *other_troons = (Troon*)malloc(count * sizeof(Troon));
+              MPI_Recv(other_troons, count, Troon::datatype, other_rank, 0, MPI_COMM_WORLD, &status);
+              for (int i = 0; i < count; i++) {
+                my_troons.push_back(other_troons[i]);
+              }
+              free(other_troons);
+            }
+          }
+
+          std::sort(my_troons.begin(), my_troons.end(),
+            [](const Troon &a, const Troon &b) {
+              if (a.line != b.line) {
+                if (a.line == 2) return true;
+                if (a.line == 1) return false;
+
+                return b.line != 2;
+              }
+
+              return a.id < b.id;
+          });
+
+          std::cout << tick << ": ";
+          for (Troon &troon : my_troons) {
+            char lc = '\0';
+            switch (troon.line) {
+              case 0:
+                lc = 'g';
+                break;
+              case 1:
+                lc = 'y';
+                break;
+              case 2:
+                lc = 'b';
+                break;
+            }
+
+            std::cout << lc << troon.id << "-" << station_names[links[troon.on_link].from];
+            if (troon.state == Troon::State::in_transit) {
+              std::cout << "->" << station_names[links[troon.on_link].to];
+            } else if (troon.state == Troon::State::waiting_platform) {
+              std::cout << "#";
+            } else {
+              std::cout << "%";
+            }
+
+            std::cout << " ";
+          }
+          std::cout << '\n';
+        }
+      }
+    }
   }
 
 
