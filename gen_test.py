@@ -18,26 +18,42 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate test cases for the Troons problem."
     )
-    parser.add_argument("S", type=int, help="troons stations in the network (max 17576)")
     parser.add_argument(
-        "max_popularity", type=int, help="greatest possible popularity to be generated"
+        "--stations", 
+        type=int,
+        default=10, 
+        help="troons stations in the network (max 17576)"
     )
     parser.add_argument(
-        "max_link_weight",
+        "--max_popularity", 
         type=int,
+        default=5,
+        help="greatest possible popularity to be generated"
+    )
+    parser.add_argument(
+        "--max_link_weight",
+        type=int,
+        default=5,
         help="greatest possible link weight to be generated",
     )
     parser.add_argument(
-        "max_line_size",
+        "--max_line_size",
         type=int,
+        default=5,
         help="maximum no. of trains per line to be generated",
     )
     parser.add_argument(
-        "max_line_len",
+        "--max_line_len",
         type=int,
+        default=5,
         help="maximum no. of stations per line to be generated",
     )
-    parser.add_argument("N", type=int, help="ticks to run for the simulation")
+    parser.add_argument(
+        "--ticks",
+        type=int,
+        default=10, 
+        help="ticks to run for the simulation"
+    )
     parser.add_argument(
         "--seed", type=int, default=42069, help="seed to feed random generator"
     )
@@ -54,7 +70,7 @@ def main() -> None:
     args = parse_args()
     seed(args.seed)
 
-    S = min(17576, args.S)
+    S = min(17576, args.stations)
     print(S)
 
     Smap = {}
@@ -119,7 +135,7 @@ def main() -> None:
 
     def ml(): return randint(max(0, args.max_line_size - 3), args.max_line_size)
 
-    print(args.N)
+    print(args.ticks)
     print(f"{ml()} {ml()} {ml()}")
     print(args.num_lines)
 
