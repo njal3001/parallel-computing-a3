@@ -1,0 +1,9 @@
+0: b3-changi# g0-changi% g1-clementi% y2-clementi# 
+1: b3-changi# g0-changi% g1-clementi% g4-changi# y2-clementi# 
+2: b3-changi# g0-changi% g1-clementi% g4-changi# y2-clementi# 
+3: b3-changi% g0-changi->tampines g1-clementi->tampines g4-changi# y2-clementi% 
+4: b3-changi% g0-changi->tampines g1-tampines% g4-changi# y2-clementi% 
+5: b3-changi% g0-changi->tampines g1-tampines% g4-changi# y2-clementi% 
+6: b3-changi% g0-changi->tampines g1-tampines% g4-changi# y2-clementi->tampines 
+7: b3-changi% g0-tampines% g1-tampines% g4-changi# y2-tampines% 
+8: b3-changi->tampines g0-tampines% g1-tampines->changi g4-changi% y2-tampines% 
