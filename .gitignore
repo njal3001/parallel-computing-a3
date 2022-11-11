@@ -31,3 +31,6 @@
 *.out
 *.app
 troons
+
+# VSCode folders
+.vscode/
