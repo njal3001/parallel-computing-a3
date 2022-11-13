@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <unistd.h> // CLEANUP
 
-constexpr size_t num_lines = 3;
+constexpr uint32_t num_lines = 3;
 
 using adjacency_matrix = std::vector<std::vector<uint32_t>>;
 
@@ -256,9 +256,17 @@ std::vector<std::string> extract_station_names(std::string& line)
     return stations;
 }
 
-int div_round_up(int a, int b)
+bool arr_contains(uint32_t val, const uint32_t *arr, uint32_t size)
 {
-    return (a + b - 1) / b;
+    for (uint32_t i = 0; i < size; i++)
+    {
+        if (val == arr[i])
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Assumes that the array contains the value
@@ -363,6 +371,17 @@ Troon *LinkGroup::get_troon(uint32_t index)
     }
 
     return troons.data() + index - 1;
+}
+
+int link_rank(uint32_t link_id, uint32_t num_proc, uint32_t num_links)
+{
+    uint32_t quot = num_links / num_proc;
+    if (!quot)
+    {
+        return num_proc - 1;
+    }
+
+    return (link_id - 1) / quot;
 }
 
 Network::Network()
@@ -726,14 +745,174 @@ void gather_all_troons(const Network &network, const LinkGroup &link_group, int 
             MPI_COMM_WORLD);
 }
 
-void simulate_tick(Network &network, LinkGroup &link_group, uint32_t tick,
-        int rank, int num_proc)
+void send_troon_message(const Troon &troon, const Network &network,
+         uint32_t src_link_id, uint32_t dst_link_id, int num_proc,
+         std::vector<Troon> &troon_buffer,
+         std::vector<MPI_Request> &request_buffer)
+{
+    troon_buffer.push_back(troon);
+    request_buffer.push_back(MPI_Request());
+
+    int dst_rank = link_rank(dst_link_id, num_proc, network.links.size());
+
+    MPI_Isend(&troon_buffer.back(), 1, Troon::datatype, dst_rank, src_link_id,
+            MPI_COMM_WORLD, &request_buffer.back());
+}
+
+void receive_troon_message(const Network &network,
+        uint32_t src_link_id, uint32_t dst_link_id, int num_proc,
+         std::vector<Troon> &troon_buffer,
+         std::vector<MPI_Request> &request_buffer)
+{
+    troon_buffer.push_back(Troon());
+    request_buffer.push_back(MPI_Request());
+
+    int src_rank = link_rank(src_link_id, num_proc, network.links.size());
+
+    // CLEANUP
+    /*
+    std::cout << "Link " << src_link_id << " gives source rank: "
+        << src_rank << '\n' << std::flush;
+    */
+
+    MPI_Irecv(&troon_buffer.back(), 1, Troon::datatype, src_rank, dst_link_id,
+            MPI_COMM_WORLD, &request_buffer.back());
+}
+
+void simulate_tick(Network &network, LinkGroup &link_group,
+        uint32_t tick, int num_proc)
 {
     spawn_troons(network, link_group, tick);
 
-    for (uint32_t i = link_group.start; i < link_group.end; i++)
+    std::vector<Troon> sent_troons;
+    std::vector<MPI_Request> send_requests;
+
+    std::vector<Troon> received_troons;
+    std::vector<MPI_Request> receive_requests;
+
+    // Sending and receiving troons
+    for (uint32_t link_id = link_group.start; link_id < link_group.end;
+            link_id++)
     {
-        LinkState *link_state = link_group.get_link_state(i);
+        Link *link = &network.links[link_id - 1];
+        LinkState *link_state = link_group.get_link_state(link_id);
+
+        uint32_t has_sent[num_lines] = {};
+
+        // Transit troon on link
+        Troon *transit_troon = link_group.get_troon(link_state->in_transit);
+        if (transit_troon &&
+                tick - transit_troon->state_timestamp >= link->length)
+        {
+            uint32_t dst_link_id = link->next_link[transit_troon->line];
+            transit_troon->state = Troon::State::waiting_platform;
+            transit_troon->state_timestamp = tick;
+            transit_troon->on_link = dst_link_id;
+
+            if (link_group.has_link(dst_link_id))
+            {
+                // Next link is in same group, just transfer directly
+                LinkState *next_link_state =
+                    link_group.get_link_state(dst_link_id);
+
+                next_link_state->waiting_platform.push(link_state->in_transit);
+            }
+            else
+            {
+                // Next link is not in the same group, need to tranfer with
+                // messages
+                send_troon_message(*transit_troon, network, link_id,
+                        dst_link_id, num_proc, sent_troons, send_requests);
+
+                // TODO: We remove the troon since it was sent out of our group
+            }
+
+            has_sent[transit_troon->line] = dst_link_id;
+            link_state->in_transit = 0;
+        }
+
+
+        // We also need to notify the other connecting links that
+        // no new troons have arrived
+        Troon empty_troon;
+        for (uint32_t line = 0; line < num_lines; line++)
+        {
+            uint32_t dst_link_id = link->next_link[line];
+
+            if (!dst_link_id)
+            {
+                // No connecting link for this line
+                continue;
+            }
+            if (link_group.has_link(dst_link_id))
+            {
+                // No need to send message if it's the same link group
+                continue;
+            }
+            if (arr_contains(dst_link_id, has_sent, line))
+            {
+                // We have already sent a message for this line
+                continue;
+            }
+
+            send_troon_message(empty_troon, network, link_id, dst_link_id,
+                    num_proc, sent_troons, send_requests);
+
+            has_sent[line] = dst_link_id;
+        }
+
+        // We need to receive all incoming troons from other links
+        uint32_t has_received[num_lines] = {};
+        for (uint32_t line = 0; line < num_lines; line++)
+        {
+            uint32_t src_link_id = link->prev_link[line];
+            if (!src_link_id)
+            {
+                // No connecting link for this line
+                continue;
+            }
+            if (link_group.has_link(src_link_id))
+            {
+                // No need to receive message if it's the same link group
+                continue;
+            }
+            if (arr_contains(src_link_id, has_received, line))
+            {
+                // We have already received a message for this line
+                continue;
+            }
+
+            receive_troon_message(network, src_link_id, link_id, num_proc,
+                    received_troons, receive_requests);
+        }
+    }
+
+    // Wait for all receive requests to complete
+    int receive_count = receive_requests.size();
+    std::vector<MPI_Status> receive_statuses(receive_count);
+    MPI_Waitall(receive_count, receive_requests.data(),
+            receive_statuses.data());
+
+    // Handle the received troons
+    for (auto &arriving_troon : received_troons)
+    {
+        // Ignore empty troon
+        if (!arriving_troon.on_link)
+        {
+            continue;
+        }
+    }
+
+    // Wait for all send requests to complete
+    int send_count = send_requests.size();
+    std::vector<MPI_Status> send_statuses(send_count);
+    MPI_Waitall(send_count, send_requests.data(),
+            send_statuses.data());
+
+    for (uint32_t link_id = link_group.start; link_id < link_group.end;
+            link_id++)
+    {
+        LinkState *link_state = link_group.get_link_state(link_id);
 
         // Move from platform to link
         if (link_state->on_platform)
@@ -754,7 +933,7 @@ void simulate_tick(Network &network, LinkGroup &link_group, uint32_t tick,
                 {
                     // Check if troon is finished with opening
                     // and closing doors and letting passengers on
-                    Station *station = network.src(i);
+                    Station *station = network.src(link_id);
                     uint32_t wait_time = station->popularity + 1;
                     if (tick - platform_troon->state_timestamp >= wait_time)
                     {
@@ -906,7 +1085,7 @@ void main_proc_exec(int argc, char *argv[], int num_proc)
     std::vector<Troon> all_troons;
     for (uint32_t tick = 0; tick < network.ticks; tick++)
     {
-        simulate_tick(network, link_group, tick, 0, num_proc);
+        simulate_tick(network, link_group, tick, num_proc);
 
         if (network.ticks - network.num_print_lines <= tick)
         {
@@ -925,7 +1104,7 @@ void sub_proc_exec(int rank, int num_proc)
 
     for (uint32_t tick = 0; tick < network.ticks; tick++)
     {
-        simulate_tick(network, link_group, tick, rank, num_proc);
+        simulate_tick(network, link_group, tick, num_proc);
 
         if (network.ticks - network.num_print_lines <= tick)
         {
@@ -949,7 +1128,7 @@ int main(int argc, char *argv[])
 
 // CLEANUP
 #ifdef DEBUG
-    if (rank == 1)
+    if (rank == 0)
     {
         char hostname[256];
         gethostname(hostname, 256);
