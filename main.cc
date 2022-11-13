@@ -532,11 +532,6 @@ int main(int argc, char *argv[]) {
                             troon.going_forward = links[next_link_id].usage[troon.line] == Link::Usage::forward;
                             troon.on_link = next_link_id;
 
-                            // std::cout << "Sending troon " << troon.id << " from " << station_names[link.from] << " to " << station_names[link.to] << '\n';
-#ifdef DEBUG
-                            printf("Sending troon from rank %d to rank %d (id: %d, line: %d, from link: %d, to link: %d) at tick %d\n",
-                                   rank, destination_rank, troon.id, troon.line, i + my_links_start, next_link_id, tick);
-#endif
                             // Non blocking send to avoid deadlocks
                             MPI_Request req;
                             MPI_Isend(&troon, 1, Troon::datatype, destination_rank, 0, MPI_COMM_WORLD, &req);
@@ -547,20 +542,10 @@ int main(int argc, char *argv[]) {
 
                             MPI_Request req;
                             MPI_Isend(&empty_troon, 1, Troon::datatype, destination_rank, 0, MPI_COMM_WORLD, &req);
-
-#ifdef DEBUG
-                            printf("Sending empty troon from rank %d to rank %d (line: %d, from link: %d, to link: %d) at tick %d\n",
-                                   rank, destination_rank, line_index, i + my_links_start, next_link_id, tick);
-#endif
                         }
                     }
                 }
             }
-
-#ifdef DEBUG
-            printf("Rank %d is expecting %d messages\n", rank, num_receive);
-#endif
-
             for (int i = 0; i < num_receive; i++) {
                 MPI_Status status;
                 Troon arriving_troon;
@@ -568,11 +553,6 @@ int main(int argc, char *argv[]) {
                 if (arriving_troon.id >= 0) {
                     LinkState &link_state = link_states[arriving_troon.on_link - my_links_start];
                     link_state.waiting_platform.push(arriving_troon);
-
-#ifdef DEBUG
-                    printf("Added troon to waiting platform at  rank %d (id: %d, line: %d, link: %d) at tick %d\n",
-                           rank, arriving_troon.id, arriving_troon.line, arriving_troon.on_link, tick);
-#endif
                 }
             }
 
@@ -592,23 +572,12 @@ int main(int argc, char *argv[]) {
 
                         link_state.on_platform.id = -1;
 
-#ifdef DEBUG
-                        printf("Rank %d moved troon at link %d from waiting on transit to transiting (id: %d, line: %d) at tick %d\n", rank, i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
-#endif
                     } else {
                         if (link_state.in_transit.id < 0) {
-                            int wait_time = from_station.popularity + 1;
-                            if (tick - link_state.on_platform.state_timestamp >= wait_time) {
+                            int wait_time = from_station.popularity + 2;
+                            if (tick - link_state.on_platform.state_timestamp + 1 >= wait_time) {
                                 link_state.on_platform.state = Troon::State::waiting_transit;
                                 link_state.on_platform.state_timestamp = tick;
-
-#ifdef DEBUG
-                                printf(
-                                    "Rank %d moved troon at link %d from being on platform to waiting for transit"
-                                    "(id: %d, line: %d) at tick %d\n",
-                                    rank,
-                                    i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
-#endif
                             }
                         }
                     }
@@ -622,11 +591,6 @@ int main(int argc, char *argv[]) {
                     first_troon.state_timestamp = tick;
                     first_troon.state = Troon::State::on_platform;
                     link_state.on_platform = first_troon;
-
-#ifdef DEBUG
-                    printf("Rank %d moved troon at link %d from waiting area to platform (id: %d, line: %d) at tick %d\n", rank,
-                           i + my_links_start, link_state.on_platform.id, link_state.on_platform.line, tick);
-#endif
                 }
             }
 
