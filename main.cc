@@ -185,8 +185,8 @@ struct Network
 
     size_t troon_count() const;
 
-    Station *src(uint32_t link_id);
-    Station *dst(uint32_t link_id);
+    const Station *src(uint32_t link_id) const;
+    const Station *dst(uint32_t link_id) const;
 };
 
 struct LinkState
@@ -237,6 +237,16 @@ struct LinkGroup
         os << '[' << group.start << ", " << group.end << "]\n";
         return os;
     }
+};
+
+struct TroonMessage
+{
+    Troon troon;
+    uint32_t src_link;
+    uint32_t dst_link;
+
+    TroonMessage(const Troon &troon, uint32_t src_link, uint32_t dst_link);
+    TroonMessage(uint32_t src_link, uint32_t dst_link);
 };
 
 std::vector<std::string> extract_station_names(std::string& line)
@@ -381,8 +391,23 @@ int link_rank(uint32_t link_id, uint32_t num_proc, uint32_t num_links)
         return num_proc - 1;
     }
 
-    return (link_id - 1) / quot;
+    uint32_t rank = (link_id - 1) / quot;
+    if (rank >= num_proc)
+    {
+        return num_proc - 1;
+    }
+
+    return rank;
 }
+
+TroonMessage::TroonMessage(const Troon &troon, uint32_t src_link,
+        uint32_t dst_link)
+    : troon(troon), src_link(src_link), dst_link(dst_link)
+{}
+
+TroonMessage::TroonMessage(uint32_t src_link, uint32_t dst_link)
+    : src_link(src_link), dst_link(dst_link)
+{}
 
 Network::Network()
     : ticks(0), num_print_lines(0)
@@ -449,8 +474,8 @@ Network::Network(uint32_t num_stations,
         std::vector<std::string> &line_names = *all_line_names[line];
         uint32_t num_line_stations = line_names.size();
 
-        uint32_t forward_end_id;
-        uint32_t backward_end_id;
+        uint32_t forward_end_id = 0;
+        uint32_t backward_end_id = 0;
 
         // Forward
         {
@@ -461,7 +486,7 @@ Network::Network(uint32_t num_stations,
                 size_t dst = find_index(line_names[i + 1], station_names);
 
                 uint32_t link_id = link_matrix[src][dst];
-                Link *link = &links[i];
+                Link &link = links[link_id - 1];
 
                 if (!prev_link_id)
                 {
@@ -469,7 +494,7 @@ Network::Network(uint32_t num_stations,
                 }
                 else
                 {
-                    link->prev_link[line] = prev_link_id;
+                    link.prev_link[line] = prev_link_id;
                     links[prev_link_id - 1].next_link[line] = link_id;
                 }
 
@@ -488,7 +513,7 @@ Network::Network(uint32_t num_stations,
                 size_t dst = find_index(line_names[i - 1], station_names);
 
                 uint32_t link_id = link_matrix[src][dst];
-                Link *link = &links[i];
+                Link &link = links[link_id - 1];
 
                 if (!prev_link_id)
                 {
@@ -496,7 +521,7 @@ Network::Network(uint32_t num_stations,
                 }
                 else
                 {
-                    link->prev_link[line] = prev_link_id;
+                    link.prev_link[line] = prev_link_id;
                     links[prev_link_id - 1].next_link[line] = link_id;
                 }
 
@@ -507,18 +532,47 @@ Network::Network(uint32_t num_stations,
         }
 
         // Connect forward and backwards links
-        Link *forward_start = &links[line_forward_start[line] - 1];
-        Link *backward_start =
-            &links[line_backward_start[line] - 1];
-        Link *forward_end = &links[forward_end_id - 1];
-        Link *backward_end = &links[backward_end_id - 1];
+        Link &forward_start = links[line_forward_start[line] - 1];
+        Link &backward_start = links[line_backward_start[line] - 1];
+        Link &forward_end = links[forward_end_id - 1];
+        Link &backward_end = links[backward_end_id - 1];
 
-        forward_start->prev_link[line] = backward_end_id;
-        backward_start->prev_link[line] = forward_end_id;
+        forward_start.prev_link[line] = backward_end_id;
+        backward_start.prev_link[line] = forward_end_id;
 
-        forward_end->next_link[line] = line_backward_start[line];
-        backward_end->next_link[line] = line_forward_start[line];
+        forward_end.next_link[line] = line_backward_start[line];
+        backward_end.next_link[line] = line_forward_start[line];
     }
+
+    // CLEANUP
+    /*
+    for (uint32_t line = 0; line < num_lines; line++)
+    {
+        int count = 0;
+        std::cout << "Line: " << line << ": ";
+        uint32_t link_id = line_forward_start[line];
+        do
+        {
+            const Link &link = links[link_id - 1];
+            uint32_t next_link_id = link.next_link[line];
+            uint32_t prev_link_id = link.prev_link[line];
+            std::cout << "(" << prev_link_id << " -> " << link_id <<
+                " -> " << next_link_id << "), ";
+
+            link_id = next_link_id;
+            count++;
+        } while(link_id != line_forward_start[line] && count < 5);
+
+        std::cout << '\n';
+    }
+
+    for (size_t i = 0; i < links.size(); i++)
+    {
+        const Link &link = links[i];
+        std::cout << "Link " << i + 1 << ": " << station_names[link.src]
+            << " -> " << station_names[link.dst] << '\n';
+    }
+    */
 }
 
 void Network::print() const
@@ -653,12 +707,12 @@ size_t Network::troon_count() const
     return count;
 }
 
-Station *Network::src(uint32_t link_id)
+const Station *Network::src(uint32_t link_id) const
 {
     return stations.data() + links[link_id - 1].src;
 }
 
-Station *Network::dst(uint32_t link_id)
+const Station *Network::dst(uint32_t link_id) const
 {
     return stations.data() + links[link_id - 1].dst;
 }
@@ -711,7 +765,7 @@ void send_all_troons(const LinkGroup &link_group)
             nullptr, nullptr, Troon::datatype, 0, MPI_COMM_WORLD);
 }
 
-void gather_all_troons(const Network &network, const LinkGroup &link_group, int num_proc,
+void gather_all_troons(const LinkGroup &link_group, int num_proc,
         std::vector<Troon> &out)
 {
     std::vector<int> troon_counts(num_proc);
@@ -721,9 +775,12 @@ void gather_all_troons(const Network &network, const LinkGroup &link_group, int 
     MPI_Gather(&my_count, 1, MPI_INT, troon_counts.data(), 1, MPI_INT, 0,
             MPI_COMM_WORLD);
 
+    int total_count = troon_counts[0];
+
     for (int i = 1; i < num_proc; i++)
     {
         offsets[i] = troon_counts[i - 1] + offsets[i - 1];
+        total_count += troon_counts[i];
     }
 
     // CLEANUP
@@ -738,45 +795,61 @@ void gather_all_troons(const Network &network, const LinkGroup &link_group, int 
     std::cout << "]\n";
     */
 
-    out.resize(network.troon_count());
+    out.resize(total_count);
 
     MPI_Gatherv(link_group.troons.data(), my_count, Troon::datatype, out.data(),
             troon_counts.data(), offsets.data(), Troon::datatype, 0,
             MPI_COMM_WORLD);
 }
 
-void send_troon_message(const Troon &troon, const Network &network,
-         uint32_t src_link_id, uint32_t dst_link_id, int num_proc,
-         std::vector<Troon> &troon_buffer,
-         std::vector<MPI_Request> &request_buffer)
+int troon_message_tag(uint32_t src_link_id, uint32_t dst_link_id, uint32_t tick)
 {
-    troon_buffer.push_back(troon);
-    request_buffer.push_back(MPI_Request());
-
-    int dst_rank = link_rank(dst_link_id, num_proc, network.links.size());
-
-    MPI_Isend(&troon_buffer.back(), 1, Troon::datatype, dst_rank, src_link_id,
-            MPI_COMM_WORLD, &request_buffer.back());
+    uint16_t link_combined = (dst_link_id << 8) | (src_link_id & 0xFF);
+    return (tick << 16) | (link_combined & 0xFFFF);
 }
 
-void receive_troon_message(const Network &network,
-        uint32_t src_link_id, uint32_t dst_link_id, int num_proc,
-         std::vector<Troon> &troon_buffer,
+void send_troon_message(size_t index, const Network &network, int num_proc,
+         uint32_t tick, std::vector<TroonMessage> &msg_buffer,
          std::vector<MPI_Request> &request_buffer)
 {
-    troon_buffer.push_back(Troon());
-    request_buffer.push_back(MPI_Request());
+    TroonMessage &msg = msg_buffer[index];
+    Troon &troon = msg.troon;
 
-    int src_rank = link_rank(src_link_id, num_proc, network.links.size());
+    MPI_Request &req = request_buffer[index];
+
+    int dst_rank = link_rank(msg.dst_link, num_proc, network.links.size());
+    int tag = troon_message_tag(msg.src_link, msg.dst_link, tick);
 
     // CLEANUP
     /*
-    std::cout << "Link " << src_link_id << " gives source rank: "
-        << src_rank << '\n' << std::flush;
+    std::cout << "Sending message from Link " << msg.src_link << " to link "
+        << msg.dst_link << " at tick " << tick << ", dst rank is " << dst_rank << '\n' << std::flush;
     */
 
-    MPI_Irecv(&troon_buffer.back(), 1, Troon::datatype, src_rank, dst_link_id,
-            MPI_COMM_WORLD, &request_buffer.back());
+    MPI_Isend(&troon, 1, Troon::datatype, dst_rank, tag,
+            MPI_COMM_WORLD, &req);
+}
+
+void receive_troon_message(size_t index, const Network &network,
+        int num_proc, uint32_t tick, std::vector<TroonMessage> &msg_buffer,
+         std::vector<MPI_Request> &request_buffer)
+{
+    TroonMessage &msg = msg_buffer[index];
+    Troon &troon = msg.troon;
+
+    MPI_Request &req = request_buffer[index];
+
+    int src_rank = link_rank(msg.src_link, num_proc, network.links.size());
+    int tag = troon_message_tag(msg.src_link, msg.dst_link, tick);
+
+    // CLEANUP
+    /*
+    std::cout << "Receiving message from Link " << msg.src_link<< " at link "
+        << msg.dst_link << " at tick " << tick << ", src rank is " << src_rank << '\n' << std::flush;
+    */
+
+    MPI_Irecv(&troon, 1, Troon::datatype, src_rank, tag,
+            MPI_COMM_WORLD, &req);
 }
 
 void simulate_tick(Network &network, LinkGroup &link_group,
@@ -784,10 +857,10 @@ void simulate_tick(Network &network, LinkGroup &link_group,
 {
     spawn_troons(network, link_group, tick);
 
-    std::vector<Troon> sent_troons;
+    std::vector<TroonMessage> send_messages;
     std::vector<MPI_Request> send_requests;
 
-    std::vector<Troon> received_troons;
+    std::vector<TroonMessage> receive_messages;
     std::vector<MPI_Request> receive_requests;
 
     // Sending and receiving troons
@@ -821,10 +894,22 @@ void simulate_tick(Network &network, LinkGroup &link_group,
             {
                 // Next link is not in the same group, need to tranfer with
                 // messages
-                send_troon_message(*transit_troon, network, link_id,
-                        dst_link_id, num_proc, sent_troons, send_requests);
+                send_messages.push_back(
+                        TroonMessage(*transit_troon, link_id, dst_link_id));
 
-                // TODO: We remove the troon since it was sent out of our group
+                // Remove the troon since it was sent out of our group.
+                // Since we do not want to invalidate any references we only
+                // remove the troon if it's the last one, otherwise we just
+                // mark it as invalid
+                if (link_state->in_transit == link_group.troons.size())
+                {
+                    link_group.troons.pop_back();
+                }
+                else
+                {
+                    // Invalidate troon
+                    transit_troon->on_link = 0;
+                }
             }
 
             has_sent[transit_troon->line] = dst_link_id;
@@ -849,14 +934,14 @@ void simulate_tick(Network &network, LinkGroup &link_group,
                 // No need to send message if it's the same link group
                 continue;
             }
-            if (arr_contains(dst_link_id, has_sent, line))
+            if (arr_contains(dst_link_id, has_sent, line + 1))
             {
                 // We have already sent a message for this line
                 continue;
             }
 
-            send_troon_message(empty_troon, network, link_id, dst_link_id,
-                    num_proc, sent_troons, send_requests);
+            send_messages.push_back(
+                    TroonMessage(empty_troon, link_id, dst_link_id));
 
             has_sent[line] = dst_link_id;
         }
@@ -876,38 +961,66 @@ void simulate_tick(Network &network, LinkGroup &link_group,
                 // No need to receive message if it's the same link group
                 continue;
             }
-            if (arr_contains(src_link_id, has_received, line))
+            if (arr_contains(src_link_id, has_received, line + 1))
             {
                 // We have already received a message for this line
                 continue;
             }
 
-            receive_troon_message(network, src_link_id, link_id, num_proc,
-                    received_troons, receive_requests);
+            receive_messages.push_back(TroonMessage(src_link_id, link_id));
+
+            has_received[line] = src_link_id;
         }
     }
 
-    // Wait for all receive requests to complete
-    int receive_count = receive_requests.size();
-    std::vector<MPI_Status> receive_statuses(receive_count);
-    MPI_Waitall(receive_count, receive_requests.data(),
-            receive_statuses.data());
+    int send_count = send_messages.size();
+    int receive_count = receive_messages.size();
 
-    // Handle the received troons
-    for (auto &arriving_troon : received_troons)
+    // Send all messages
+    send_requests.resize(send_count);
+    for (int i = 0; i < send_count; i++)
     {
+        send_troon_message(i, network, num_proc, tick,
+                send_messages, send_requests);
+    }
+
+    // Receive all messages
+    receive_requests.resize(receive_count);
+    for (int i = 0; i < receive_count; i++)
+    {
+        receive_troon_message(i, network, num_proc, tick,
+                receive_messages, receive_requests);
+    }
+
+    // Wait for all receive requests to complete
+    MPI_Waitall(receive_count, receive_requests.data(),
+            MPI_STATUSES_IGNORE);
+
+    // Handle the received messages
+    for (auto &rec_msg : receive_messages)
+    {
+        Troon &arriving_troon = rec_msg.troon;
+
         // Ignore empty troon
         if (!arriving_troon.on_link)
         {
             continue;
         }
+
+        // Add arriving troon to waiting platform
+        link_group.troons.push_back(arriving_troon);
+
+        LinkState *link_state =
+            link_group.get_link_state(arriving_troon.on_link);
+
+        assert(link_state);
+
+        link_state->waiting_platform.push(link_group.troons.size());
     }
 
     // Wait for all send requests to complete
-    int send_count = send_requests.size();
-    std::vector<MPI_Status> send_statuses(send_count);
     MPI_Waitall(send_count, send_requests.data(),
-            send_statuses.data());
+            MPI_STATUSES_IGNORE);
 
     for (uint32_t link_id = link_group.start; link_id < link_group.end;
             link_id++)
@@ -933,9 +1046,9 @@ void simulate_tick(Network &network, LinkGroup &link_group,
                 {
                     // Check if troon is finished with opening
                     // and closing doors and letting passengers on
-                    Station *station = network.src(link_id);
-                    uint32_t wait_time = station->popularity + 1;
-                    if (tick - platform_troon->state_timestamp >= wait_time)
+                    const Station *station = network.src(link_id);
+                    if (tick - platform_troon->state_timestamp >
+                            station->popularity)
                     {
                         platform_troon->state = Troon::State::waiting_transit;
                         platform_troon->state_timestamp = tick;
@@ -947,14 +1060,26 @@ void simulate_tick(Network &network, LinkGroup &link_group,
         // Move from waiting area to platform
         if (!link_state->on_platform && !link_state->waiting_platform.empty())
         {
-            uint32_t troon_index = link_state->waiting_platform.top();
-            link_state->waiting_platform.pop();
+            // Get the next troon on the waiting platform,
+            // skip if the troon is invalidated
+            uint32_t troon_index;
+            Troon *troon;
 
-            link_state->on_platform = troon_index;
+            do
+            {
+                troon_index = link_state->waiting_platform.top();
+                troon = link_group.get_troon(troon_index);
+                link_state->waiting_platform.pop();
+            }
+            while (!link_state->waiting_platform.empty() && !troon->on_link);
 
-            Troon *troon = link_group.get_troon(troon_index);
-            troon->state = Troon::State::on_platform;
-            troon->state_timestamp = tick;
+            if (troon->on_link)
+            {
+                link_state->on_platform = troon_index;
+
+                troon->state = Troon::State::on_platform;
+                troon->state_timestamp = tick;
+            }
         }
     }
 }
@@ -977,6 +1102,12 @@ void print_troons(std::vector<Troon> &troons, const Network &network,
     std::cout << tick << ": ";
     for (const auto &troon : troons)
     {
+        if (!troon.on_link)
+        {
+            // Skip invalid troon
+            continue;
+        }
+
         std::cout << troon_name(troon);
 
         uint32_t src = network.links[troon.on_link - 1].src;
@@ -999,7 +1130,7 @@ void print_troons(std::vector<Troon> &troons, const Network &network,
         std::cout << " ";
     }
 
-    std::cout << '\n';
+    std::cout << '\n' << std::flush;
 }
 
 void main_proc_exec(int argc, char *argv[], int num_proc)
@@ -1089,7 +1220,18 @@ void main_proc_exec(int argc, char *argv[], int num_proc)
 
         if (network.ticks - network.num_print_lines <= tick)
         {
-            gather_all_troons(network, link_group, num_proc, all_troons);
+            // CLEANUP
+            /*
+            MPI_Status status;
+            MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+            int tag = status.MPI_TAG;
+            uint8_t src = tag & 0xFF;
+            uint8_t dst = (tag >> 8) & 0xFF;
+            uint16_t tick = tag >> 16;
+            printf("From: %d, To: %d, Tick: %d\n", src, dst, tick);
+            */
+
+            gather_all_troons(link_group, num_proc, all_troons);
             print_troons(all_troons, network, tick);
         }
     }
