@@ -13,4 +13,4 @@ nfs_dir="/nfs/home/$USER"
 
 cp troons $nfs_dir
 cd ~
-srun --nodes $nodes --ntasks-per-node $ntasks $nfs_dir/troons $nfs_dir/$in
+srun --nodes $nodes --ntasks-per-node $ntasks --time=00:60:00 $nfs_dir/troons $nfs_dir/$in

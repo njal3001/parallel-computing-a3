@@ -187,6 +187,10 @@ struct Network
 
     const Station *src(uint32_t link_id) const;
     const Station *dst(uint32_t link_id) const;
+
+private:
+    uint32_t add_link(size_t src, size_t dst,
+            const adjacency_matrix &length_mat, adjacency_matrix &link_mat);
 };
 
 struct LinkState
@@ -450,7 +454,7 @@ Network::Network(uint32_t num_stations,
     // link_matrix[src][dst] is link: src -> dst
     adjacency_matrix link_matrix(num_stations,
             std::vector<uint32_t>(num_stations));
-
+    /*
     for (uint32_t src = 0; src < num_stations; src++)
     {
         for (uint32_t dst = 0; dst < num_stations; dst++)
@@ -465,6 +469,7 @@ Network::Network(uint32_t num_stations,
             }
         }
     }
+    */
 
     std::vector<std::string> *all_line_names[num_lines] =
     { &green_station_names, &yellow_station_names, &blue_station_names };
@@ -480,12 +485,15 @@ Network::Network(uint32_t num_stations,
         // Forward
         {
             uint32_t prev_link_id = 0;
+
             for (uint32_t i = 0; i < num_line_stations - 1; i++)
             {
                 size_t src = find_index(line_names[i], station_names);
                 size_t dst = find_index(line_names[i + 1], station_names);
 
-                uint32_t link_id = link_matrix[src][dst];
+                // CLEANUP
+                // uint32_t link_id = link_matrix[src][dst];
+                uint32_t link_id = add_link(src, dst, mat, link_matrix);
                 Link &link = links[link_id - 1];
 
                 if (!prev_link_id)
@@ -512,7 +520,9 @@ Network::Network(uint32_t num_stations,
                 size_t src = find_index(line_names[i], station_names);
                 size_t dst = find_index(line_names[i - 1], station_names);
 
-                uint32_t link_id = link_matrix[src][dst];
+                // CLEANUP
+                // uint32_t link_id = link_matrix[src][dst];
+                uint32_t link_id = add_link(src, dst, mat, link_matrix);
                 Link &link = links[link_id - 1];
 
                 if (!prev_link_id)
@@ -573,6 +583,23 @@ Network::Network(uint32_t num_stations,
             << " -> " << station_names[link.dst] << '\n';
     }
     */
+}
+
+uint32_t Network::add_link(size_t src, size_t dst,
+        const adjacency_matrix &length_mat, adjacency_matrix &link_mat)
+{
+    uint32_t link_id = link_mat[src][dst];
+    if (link_id)
+    {
+        return link_id;
+    }
+
+    links.push_back(Link(src, dst, length_mat[src][dst]));
+
+    uint32_t new_link_id = links.size();
+    link_mat[src][dst] = new_link_id;
+
+    return new_link_id;
 }
 
 void Network::print() const
@@ -853,7 +880,7 @@ void receive_troon_message(size_t index, const Network &network,
 }
 
 void simulate_tick(Network &network, LinkGroup &link_group,
-        uint32_t tick, int num_proc)
+        uint32_t tick, int num_proc, int rank)
 {
     spawn_troons(network, link_group, tick);
 
@@ -975,6 +1002,13 @@ void simulate_tick(Network &network, LinkGroup &link_group,
 
     int send_count = send_messages.size();
     int receive_count = receive_messages.size();
+
+    // CLEANUP
+    if (!tick)
+    {
+        std::cerr << "Rank " << rank << " sends " << send_count <<
+            " and receives " << receive_count << '\n';
+    }
 
     // Send all messages
     send_requests.resize(send_count);
@@ -1216,7 +1250,7 @@ void main_proc_exec(int argc, char *argv[], int num_proc)
     std::vector<Troon> all_troons;
     for (uint32_t tick = 0; tick < network.ticks; tick++)
     {
-        simulate_tick(network, link_group, tick, num_proc);
+        simulate_tick(network, link_group, tick, num_proc, 0);
 
         if (network.ticks - network.num_print_lines <= tick)
         {
@@ -1234,6 +1268,9 @@ void main_proc_exec(int argc, char *argv[], int num_proc)
             gather_all_troons(link_group, num_proc, all_troons);
             print_troons(all_troons, network, tick);
         }
+
+        // CLEANUP
+        std::cerr << "Tick " << tick << '\n';
     }
 }
 
@@ -1246,7 +1283,7 @@ void sub_proc_exec(int rank, int num_proc)
 
     for (uint32_t tick = 0; tick < network.ticks; tick++)
     {
-        simulate_tick(network, link_group, tick, num_proc);
+        simulate_tick(network, link_group, tick, num_proc, rank);
 
         if (network.ticks - network.num_print_lines <= tick)
         {
