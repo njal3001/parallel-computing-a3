@@ -24,7 +24,7 @@ set -e
 ##########################
 
 # A meaningful name for this job
-export SBATCH_JOB_NAME="troons_job"
+export SBATCH_JOB_NAME="troons_seq_job"
 
 # You can change this to your username, but not necessary.
 export USERNAME=$USER
@@ -34,7 +34,7 @@ export CODE_DIR=slurm/
 
 # Change this to point at the main executable or shell script you want to run
 # This is relative to CODE_DIR (the executable must be within CODE_DIR, or be accessible universally like `hostname`)
-export EXECUTABLE=troons
+export EXECUTABLE=troons_seq
 # Change this to change the arguments passed to the executable, comment out this line if there are no args
 export EXECUTABLE_ARGS="testcases/large.in"
 
@@ -43,7 +43,7 @@ export NFS_DIR=/nfs/home/$USERNAME/$SBATCH_JOB_NAME/
 
 # Change this to your job file, we have provided one example.
 # This job file must be inside the CODE_DIR!
-export SBATCH_FILE="troons.sh"
+export SBATCH_FILE="troons_seq.sh"
 
 
 ##########################
@@ -134,8 +134,8 @@ cd $INITIAL_DIR > /dev/null
 # Create symlinks in current directory to the nfs logfiles
 echo -e "\n>>> Runner: creating symlinks to NFS working directory and job logs"
 # ln -nsf $NFS_DIR ./nfs_dir
-ln -nsf $NFS_DIR/$SBATCH_JOB_NAME-$jobid.slurmlog ./troons_latest_slurm_log.slurmlog
-ln -nsf $NFS_DIR/$SBATCH_JOB_NAME-$jobid.out ./troons_latest_program_log.out
+ln -nsf $NFS_DIR/$SBATCH_JOB_NAME-$jobid.slurmlog ./troons_seq_latest_slurm_log.slurmlog
+ln -nsf $NFS_DIR/$SBATCH_JOB_NAME-$jobid.out ./troons_seq_latest_program_log.out
 
 echo -e "\n>>> Runner: printing queue and account status"
 

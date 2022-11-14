@@ -35,3 +35,7 @@ troons
 # VSCode folders
 .vscode/
 tmp.cc
+
+# performance related files
+slurm/testcases/*
+slurm/troons*
