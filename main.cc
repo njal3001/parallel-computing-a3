@@ -8,7 +8,6 @@
 #include <string.h>
 #include <queue>
 #include <algorithm>
-#include <unistd.h> // CLEANUP
 
 constexpr uint32_t num_lines = 3;
 
@@ -491,8 +490,6 @@ Network::Network(uint32_t num_stations,
                 size_t src = find_index(line_names[i], station_names);
                 size_t dst = find_index(line_names[i + 1], station_names);
 
-                // CLEANUP
-                // uint32_t link_id = link_matrix[src][dst];
                 uint32_t link_id = add_link(src, dst, mat, link_matrix);
                 Link &link = links[link_id - 1];
 
@@ -520,8 +517,6 @@ Network::Network(uint32_t num_stations,
                 size_t src = find_index(line_names[i], station_names);
                 size_t dst = find_index(line_names[i - 1], station_names);
 
-                // CLEANUP
-                // uint32_t link_id = link_matrix[src][dst];
                 uint32_t link_id = add_link(src, dst, mat, link_matrix);
                 Link &link = links[link_id - 1];
 
@@ -553,36 +548,6 @@ Network::Network(uint32_t num_stations,
         forward_end.next_link[line] = line_backward_start[line];
         backward_end.next_link[line] = line_forward_start[line];
     }
-
-    // CLEANUP
-    /*
-    for (uint32_t line = 0; line < num_lines; line++)
-    {
-        int count = 0;
-        std::cout << "Line: " << line << ": ";
-        uint32_t link_id = line_forward_start[line];
-        do
-        {
-            const Link &link = links[link_id - 1];
-            uint32_t next_link_id = link.next_link[line];
-            uint32_t prev_link_id = link.prev_link[line];
-            std::cout << "(" << prev_link_id << " -> " << link_id <<
-                " -> " << next_link_id << "), ";
-
-            link_id = next_link_id;
-            count++;
-        } while(link_id != line_forward_start[line] && count < 5);
-
-        std::cout << '\n';
-    }
-
-    for (size_t i = 0; i < links.size(); i++)
-    {
-        const Link &link = links[i];
-        std::cout << "Link " << i + 1 << ": " << station_names[link.src]
-            << " -> " << station_names[link.dst] << '\n';
-    }
-    */
 }
 
 uint32_t Network::add_link(size_t src, size_t dst,
@@ -810,18 +775,6 @@ void gather_all_troons(const LinkGroup &link_group, int num_proc,
         total_count += troon_counts[i];
     }
 
-    // CLEANUP
-    /*
-    std::cout << '[';
-    for (int i = 0; i < num_proc; i++)
-    {
-        std::cout << '(' << troon_counts[i] << ", " << offsets[i] << ')';
-        if (i < num_proc - 1)
-            std::cout << ", ";
-    }
-    std::cout << "]\n";
-    */
-
     out.resize(total_count);
 
     MPI_Gatherv(link_group.troons.data(), my_count, Troon::datatype, out.data(),
@@ -829,14 +782,8 @@ void gather_all_troons(const LinkGroup &link_group, int num_proc,
             MPI_COMM_WORLD);
 }
 
-int troon_message_tag(uint32_t src_link_id, uint32_t dst_link_id, uint32_t tick)
-{
-    uint16_t link_combined = (dst_link_id << 8) | (src_link_id & 0xFF);
-    return (tick << 16) | (link_combined & 0xFFFF);
-}
-
 void send_troon_message(size_t index, const Network &network, int num_proc,
-         uint32_t tick, std::vector<TroonMessage> &msg_buffer,
+         std::vector<TroonMessage> &msg_buffer,
          std::vector<MPI_Request> &request_buffer)
 {
     TroonMessage &msg = msg_buffer[index];
@@ -845,20 +792,13 @@ void send_troon_message(size_t index, const Network &network, int num_proc,
     MPI_Request &req = request_buffer[index];
 
     int dst_rank = link_rank(msg.dst_link, num_proc, network.links.size());
-    int tag = troon_message_tag(msg.src_link, msg.dst_link, tick);
 
-    // CLEANUP
-    /*
-    std::cout << "Sending message from Link " << msg.src_link << " to link "
-        << msg.dst_link << " at tick " << tick << ", dst rank is " << dst_rank << '\n' << std::flush;
-    */
-
-    MPI_Isend(&troon, 1, Troon::datatype, dst_rank, tag,
+    MPI_Isend(&troon, 1, Troon::datatype, dst_rank, 0,
             MPI_COMM_WORLD, &req);
 }
 
 void receive_troon_message(size_t index, const Network &network,
-        int num_proc, uint32_t tick, std::vector<TroonMessage> &msg_buffer,
+        int num_proc, std::vector<TroonMessage> &msg_buffer,
          std::vector<MPI_Request> &request_buffer)
 {
     TroonMessage &msg = msg_buffer[index];
@@ -867,20 +807,13 @@ void receive_troon_message(size_t index, const Network &network,
     MPI_Request &req = request_buffer[index];
 
     int src_rank = link_rank(msg.src_link, num_proc, network.links.size());
-    int tag = troon_message_tag(msg.src_link, msg.dst_link, tick);
 
-    // CLEANUP
-    /*
-    std::cout << "Receiving message from Link " << msg.src_link<< " at link "
-        << msg.dst_link << " at tick " << tick << ", src rank is " << src_rank << '\n' << std::flush;
-    */
-
-    MPI_Irecv(&troon, 1, Troon::datatype, src_rank, tag,
+    MPI_Irecv(&troon, 1, Troon::datatype, src_rank, 0,
             MPI_COMM_WORLD, &req);
 }
 
 void simulate_tick(Network &network, LinkGroup &link_group,
-        uint32_t tick, int num_proc, int rank)
+        uint32_t tick, int num_proc)
 {
     spawn_troons(network, link_group, tick);
 
@@ -1003,27 +936,20 @@ void simulate_tick(Network &network, LinkGroup &link_group,
     int send_count = send_messages.size();
     int receive_count = receive_messages.size();
 
-    // CLEANUP
-    if (!tick)
-    {
-        std::cerr << "Rank " << rank << " sends " << send_count <<
-            " and receives " << receive_count << '\n';
-    }
-
     // Send all messages
     send_requests.resize(send_count);
     for (int i = 0; i < send_count; i++)
     {
-        send_troon_message(i, network, num_proc, tick,
-                send_messages, send_requests);
+        send_troon_message(i, network, num_proc, send_messages,
+                send_requests);
     }
 
     // Receive all messages
     receive_requests.resize(receive_count);
     for (int i = 0; i < receive_count; i++)
     {
-        receive_troon_message(i, network, num_proc, tick,
-                receive_messages, receive_requests);
+        receive_troon_message(i, network, num_proc, receive_messages,
+                receive_requests);
     }
 
     // Wait for all receive requests to complete
@@ -1250,27 +1176,13 @@ void main_proc_exec(int argc, char *argv[], int num_proc)
     std::vector<Troon> all_troons;
     for (uint32_t tick = 0; tick < network.ticks; tick++)
     {
-        simulate_tick(network, link_group, tick, num_proc, 0);
+        simulate_tick(network, link_group, tick, num_proc);
 
         if (network.ticks - network.num_print_lines <= tick)
         {
-            // CLEANUP
-            /*
-            MPI_Status status;
-            MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-            int tag = status.MPI_TAG;
-            uint8_t src = tag & 0xFF;
-            uint8_t dst = (tag >> 8) & 0xFF;
-            uint16_t tick = tag >> 16;
-            printf("From: %d, To: %d, Tick: %d\n", src, dst, tick);
-            */
-
             gather_all_troons(link_group, num_proc, all_troons);
             print_troons(all_troons, network, tick);
         }
-
-        // CLEANUP
-        std::cerr << "Tick " << tick << '\n';
     }
 }
 
@@ -1283,7 +1195,7 @@ void sub_proc_exec(int rank, int num_proc)
 
     for (uint32_t tick = 0; tick < network.ticks; tick++)
     {
-        simulate_tick(network, link_group, tick, num_proc, rank);
+        simulate_tick(network, link_group, tick, num_proc);
 
         if (network.ticks - network.num_print_lines <= tick)
         {
@@ -1304,19 +1216,6 @@ int main(int argc, char *argv[])
     Station::register_type();
     Link::register_type();
     Troon::register_type();
-
-// CLEANUP
-#ifdef DEBUG
-    if (rank == 0)
-    {
-        char hostname[256];
-        gethostname(hostname, 256);
-        bool attached = false;
-        std::cout << "Waiting for debugger to be attached, Hostname: " <<
-            hostname << ", PID: " << getpid() << '\n';
-        while (!attached) sleep(1);
-    }
-#endif
 
     if (!rank)
     {
