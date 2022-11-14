@@ -1,5 +1,5 @@
 CXX=mpiCC
-CXXFLAGS:=-Wall -Wextra -Werror -pedantic -std=c++17
+CXXFLAGS:=-Wall -Wextra -pedantic -std=c++17
 RELEASEFLAGS:=-O3
 DEBUGFLAGS:=-g
 
