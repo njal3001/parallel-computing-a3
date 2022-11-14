@@ -16,7 +16,7 @@ rsync -av /home/$USER/cs3210-a3-a3-a0200705x_a0260770h/testcases /nfs/home/$USER
 cp /home/$USER/cs3210-a3-a3-a0200705x_a0260770h/troons /nfs/home/$USER/troons
 
 cd /home/$USER
-srun -n 4 -p $PARTITION /nfs/home/$USER/troons /nfs/home/$USER/testcases/$INPUT.in > /home/$USER/cs3210-a3-a3-a0200705x_a0260770h/$INPUT.out
+srun -n 4 --time=00:30:00 /nfs/home/$USER/troons /nfs/home/$USER/testcases/$INPUT.in > /home/$USER/cs3210-a3-a3-a0200705x_a0260770h/$INPUT.out
 
 cd /home/$USER/cs3210-a3-a3-a0200705x_a0260770h
 ./troons_seq testcases/$INPUT.in > $INPUT-correct.out
