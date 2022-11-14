@@ -404,22 +404,6 @@ Network::Network(uint32_t num_stations,
     // link_matrix[src][dst] is link: src -> dst
     adjacency_matrix link_matrix(num_stations,
                                  std::vector<uint32_t>(num_stations));
-    /*
-    for (uint32_t src = 0; src < num_stations; src++)
-    {
-        for (uint32_t dst = 0; dst < num_stations; dst++)
-        {
-            uint32_t length = mat[src][dst];
-            if (length)
-            {
-                Link link(src, dst, length);
-                links.push_back(link);
-
-                link_matrix[src][dst] = links.size();
-            }
-        }
-    }
-    */
 
     std::vector<std::string> *all_line_names[num_lines] =
         {&green_station_names, &yellow_station_names, &blue_station_names};
@@ -873,10 +857,6 @@ void simulate_tick(Network &network, LinkGroup &link_group,
         link_state->waiting_platform.push(link_group.troons.size());
     }
 
-    // Wait for all send requests to complete
-    MPI_Waitall(send_count, send_requests.data(),
-                MPI_STATUSES_IGNORE);
-
     for (uint32_t link_id = link_group.start; link_id < link_group.end;
          link_id++) {
         LinkState *link_state = link_group.get_link_state(link_id);
@@ -926,6 +906,10 @@ void simulate_tick(Network &network, LinkGroup &link_group,
             }
         }
     }
+
+    // Wait for all send requests to complete
+    MPI_Waitall(send_count, send_requests.data(),
+                MPI_STATUSES_IGNORE);
 }
 
 std::string troon_name(const Troon &troon) {
