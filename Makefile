@@ -1,5 +1,5 @@
 CXX=mpiCC
-CXXFLAGS:=-Wall -Wextra -Werror -pedantic -std=c++17
+CXXFLAGS:=-Wall -Wextra -pedantic -std=c++17
 RELEASEFLAGS:=-O3
 DEBUGFLAGS:=-g
 
@@ -13,7 +13,7 @@ main.o: main.cc
 	$(CXX) $(CXXFLAGS) $(RELEASEFLAGS) -c $^
 
 clean:
-	$(RM) *.o troons
+	$(RM) *.o troons *.out
 
 debug: main.cc
 	$(CXX) $(CXXFLAGS) $(DEBUGFLAGS) -D DEBUG -o troons main.cc
