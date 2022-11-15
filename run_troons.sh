@@ -19,6 +19,12 @@
 # Exit when any command fails: remove this if necessary
 set -e
 
+if [[ $# -ne 1 ]]; then
+    echo "Usage: ./run_troons.sh <testcase>"
+    echo "Example: ./run_troons.sh testcases/sample1.in"
+    exit 2
+fi
+
 ##########################
 # 1. GENERAL SETTINGS 	 #
 ##########################
@@ -36,7 +42,7 @@ export CODE_DIR=slurm/
 # This is relative to CODE_DIR (the executable must be within CODE_DIR, or be accessible universally like `hostname`)
 export EXECUTABLE=troons
 # Change this to change the arguments passed to the executable, comment out this line if there are no args
-export EXECUTABLE_ARGS="testcases/large.in"
+export EXECUTABLE_ARGS=$1
 
 # Destination directory in NFS that your code directory is copied to, not necessary to change
 export NFS_DIR=/nfs/home/$USERNAME/$SBATCH_JOB_NAME/

@@ -39,3 +39,7 @@ tmp.cc
 # performance related files
 slurm/testcases/*
 slurm/troons*
+*.slurmlog
+testcases/small_*
+testcases/medium_*
+testcases/large_*
